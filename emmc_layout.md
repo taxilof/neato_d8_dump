@@ -1,3 +1,4 @@
+
 # Neato D8 eMMC Layout
 
 ## Disk Overview
@@ -164,21 +165,126 @@ Byte:    0       17K   20K       150K   167K     380K  456K    515K     8MB     
 
 ## Dump Files Available
 
-| File | LBA Range | Size | Date |
-|------|-----------|------|------|
-| `emmc_blocks_0_2048.dd` | 0–2047 | 1.0 MB | 2026-04-27 |
-| `emmc-dump-all/emmc_dump_all_0_4.dd` | 0–3 (partial) | 2.0 KB | 2026-04-26 |
-| `emmc-dump-all/emmc_dump_all_0_5.dd` | 0–4 (partial) | 2.5 KB | 2026-04-26 |
-| `emmc_dump_lba_50000_50000_115200.dd` | 50,000–99,999 | 25 MB | 2026-04-29 |
+| File | LBA Range | Size | Date | Notes |
+|------|-----------|------|------|-------|
+| `emmc_blocks_0_2048.dd` | 0–2047 | 1.0 MB | 2026-04-27 | First 1 MB, bootloader only |
+| `emmc-dump-all/emmc_dump_all_0_4.dd` | 0–3 (partial) | 2.0 KB | 2026-04-26 | — |
+| `emmc-dump-all/emmc_dump_all_0_5.dd` | 0–4 (partial) | 2.5 KB | 2026-04-26 | — |
+| `2026-04-28_emmc_dump_lba_0_50000_115200_minicorrupted.dd` | 0–49,999 | 25.6 MB | 2026-04-28 | First 50k: MBR + GPT + full bootloader + first 17.6 MB of kernel1 |
+| `2026-04-30_emmc_dump_lba_50000_50000_115200_minicorrupted.dd` | 50,000–99,999 | 25.6 MB | 2026-04-30 | Second 50k: kernel1 mid-to-late (all high-entropy encrypted data) |
 
-**Gaps:** No dumps of kernel1 (LBA 16384+), rfs1/rfs2/user partitions, or bootloader area beyond LBA 2047. The 25 MB dump at LBA 50000 lands inside `kernel1` (LBA 16384–147455, byte 8 MB–72 MB). LBA 50000 × 512 = 24.4 MB offset — well within kernel1.
+**Coverage:** LBA 0–99,999 (48.8 MB / 3.56 GB total = 1.3%). Covers MBR, GPT, full hidden bootloader area (LBA 0–16383), and kernel1 partition from start through ~LBA 100,000 (out of 147,455 end LBA).
+
+---
+
+## Extended Bootloader Area (LBA 2000–16383) — from 50k-block dump
+
+The 50k-block dump (LBA 0–49,999) covers the entire hidden bootloader area. New findings beyond the original 1 MB dump:
+
+### Block Density Map (LBA 0–16383)
+
+```
+LBA      0-  1999:  39.1% non-zero  (SPL + early U-Boot)
+LBA   2000-  3999:   0.5% non-zero  (almost all zeros — gap)
+LBA   4000-  5999:  90.4% non-zero  (U-Boot proper)
+LBA   6000-11999: 100.0% non-zero  (U-Boot proper, dense)
+LBA  12000-13999:  45.7% non-zero  (sparse tail)
+LBA  14000-15999:  80.0% non-zero  (ATF/OP-TEE?)
+LBA  16000-16383: 100.0% non-zero  (padding to kernel1)
+```
+
+### Key Findings
+
+| LBA Range | Size | Content | Notes |
+|-----------|------|---------|-------|
+| 0–1999 | ~1 MB | SPL + early U-Boot | Matches original 1 MB dump analysis |
+| 2000–3999 | ~1 MB | **Near-empty gap** | Only 10 non-zero blocks. Likely unused/reserved space |
+| 4000–11999 | ~4 MB | **U-Boot proper (dense)** | 100% non-zero. Core binary, drivers, commands |
+| 12000–13999 | ~1 MB | **Sparse U-Boot tail** | 45% non-zero. Possibly debug info or padding |
+| 14000–15999 | ~1 MB | **Dense continuation** | 80% non-zero. Likely ATF, OP-TEE, or additional firmware |
+| 16000–16383 | ~192 KB | **Padding to partition boundary** | 100% non-zero up to kernel1 start |
+
+**Entropy:** Bootloader dense regions ~6.4 bits/byte (typical compressed ARM64). The gap (LBA 2000–3999) is essentially zeros.
+
+### New Strings Found
+
+- FAT32 detection code
+- U-Boot partition type checking (`Invalid partition type`)
+- Android boot image support strings
+- Recovery DTB handling
+- uImage format handling
+
+Confirms U-Boot has Android boot image and uImage support, plus FAT32 filesystem handling.
+
+---
+
+## kernel1 Partition Contents (LBA 16384–147,455) — from 50k-block dumps
+
+### Overview
+
+Combined dumps cover kernel1 from LBA 16,384 to LBA 99,999 (offset 0–42.9 MB within the 64 MB partition).
+
+**Not a raw filesystem.** No FAT boot sector (no `EB 3C 90` / `E9` jump), no ext4 superblock (magic `0xEF53` not at offset +1024). The partition contains **encrypted binary data** as expected from U-Boot env analysis (`.enc` suffixes, `file_decrypt` command).
+
+### Entropy Analysis
+
+| Region (LBA) | Entropy (bits/byte) | Interpretation |
+|---------------|---------------------|----------------|
+| 16384–22000 | ~7.96–7.99 | **Highly encrypted/compressed** data |
+| 24000–25400 | ~2.8–4.0 | **Low entropy** — FIT images (DTBs) + repeating fill pattern |
+| 25400–49999 | ~7.5–8.0 | **Encrypted/compressed** data |
+| 50000–99999 (2nd dump) | ~7.99–8.0 | **Uniform high entropy** — fully encrypted throughout |
+
+### FIT Images Found Inside kernel1
+
+Despite encryption, **three unencrypted Flattened Device Tree (FDT) blobs** were found:
+
+| LBA | Offset | Size | Model String | Notes |
+|-----|--------|------|--------------|-------|
+| 24,803 | 0xC1C600 | 36,301 bytes (71 blocks) | `Neato i.MX8MNano DDR4 Lego board` | Near `NEATO-~2ENC` string — boot config FIT or key structure |
+| 24,852 | 0xC22800 | 38,167 bytes (75 blocks) | `Neato i.MX8MNano DDR4 Prime board` | Contains `fsl,imx8mn` compat strings, board description |
+| 34,672 | 0x10EE000 | 1,039 bytes (2 blocks) | — | **SPL FIT config** — matches bootloader area one. Contains `Configuration to load ATF before U-Boot`, `uboot@1`, `U-Boot (64-bit)`. Likely a backup/stub FIT header |
+
+The two larger DTBs (LBA 24,803 and 24,852) are **unencrypted device trees** embedded within the encrypted kernel image container. They appear to be **fallback DTBs** (Lego vs Prime board variants) or unencrypted metadata within a FIT image that wraps encrypted blobs.
+
+### Anomalous Regions
+
+#### Repeating 16-byte Fill Pattern (LBA ~24,900–25,300)
+
+- **Pattern:** `1999d4ab 34e61fc7 5a681df0 8e005b25` (repeating every 16 bytes)
+- **Extent:** ~411 consecutive 512-byte blocks (210 KB)
+- **Entropy:** 4.0 bits/byte (exactly 16 unique bytes)
+- **Interpretation:** Likely **encrypted padding/alignment filler** within a FIT image container. Not UART corruption (would show random noise, not a stable repeating pattern).
+
+#### Sparse/Zero Region (LBA ~32,000–33,999)
+
+- **1,142 all-zero blocks** + **856 non-zero blocks** (2 blocks with only `0x20` space chars)
+- **Interpretation:** Boundary between two separate images/containers within kernel1, or unused/erased sectors.
+
+### UART Corruption Assessment ("minicorrupted")
+
+- **First 50k (LBA 0–49,999):** Minimal. Known structures (MBR, GPT, U-Boot strings, FDT magic) intact and parseable. Anomalous regions are real data, not corruption.
+- **Second 50k (LBA 50,000–99,999):** All blocks non-zero, ~8.0 bits/byte. Since data is encrypted, corruption is **undetectable** without reference.
+- **Verdict:** Unencrypted structures (bootloader, DTBs) show no corruption signs. Encrypted regions cannot be verified. Dumps are **approximately correct but not bit-perfect**.
+
+### Updated Visual Layout Map
+
+```
+LBA:     0       2000  4000      8000  12000 14000 16000 16384 24803 24900 25400 32000 34672 50000        100000  147456
+         |        |     |         |      |      |      |      |      |      |      |      |      |      |            |       |
+Byte:    0       1MB   2MB      4MB   6MB  7MB  7.5MB  8MB  12.1MB 12.2MB 12.3MB 15.6MB 16.9MB 24.4MB      48.8MB   72MB
+         |        |     |         |      |      |      |      |      |      |      |      |      |      |            |       |
+         [SPL+U-Boot][gap][   U-Boot proper    ][spars][fill][pad][  kernel1 (encrypted)     ][DTBs][fill][zeros][FIT][ encrypted  ]
+         [               Hidden Bootloader Area (~8 MB)                ][          kernel1 partition (64 MB)                                ]
+```
 
 ---
 
 ## Open Questions
 
-1. **What's in LBA 2010–16383?** The bootloader area is 8 MB but dump only covers 1 MB. Could contain ATF (ARM Trusted Firmware), OP-TEE, or additional firmware.
-2. **Key blob format** — where is it stored on disk? Same FAT partition as kernel? What algorithm does `file_decrypt` use?
-3. **Partition contents** — are kernel1/kernel2 FAT filesystems? ext4? Raw Image files on FAT?
-4. **The `user` partition** — what filesystem? ext4? Contains Neato maps, logs, firmware updates?
-5. **Boot failure analysis** — which partition is the device actually failing to boot from? Is the kernel corrupted, encrypted data damaged, or U-Boot itself broken?
+1. **What exactly is in LBA 4000–11999?** Likely U-Boot proper, ATF, and OP-TEE. Disassembly needed.
+2. **Key blob format** — where stored on disk? Same partition as kernel? What algorithm does `file_decrypt` use?
+3. **Why are DTBs unencrypted inside kernel1?** The two large DTBs at LBA 24,803 and 24,852 are plaintext. Fallback DTBs or unencrypted FIT metadata?
+4. **The `user` partition** — what filesystem? ext4? Neato maps, logs, firmware updates?
+5. **Boot failure analysis** — which partition is the device failing to boot from? Corrupted kernel, damaged encrypted data, or broken U-Boot?
+6. **Repeating fill pattern** at LBA 24,900–25,300 — encrypted zeros? FIT padding mode?
