@@ -1,0 +1,60 @@
+/dts-v1/;
+
+/ {
+	timestamp = <0x62e963a0>;
+	description = "Configuration to load ATF before U-Boot";
+
+	images {
+
+		uboot@1 {
+			data-size = <0xbdbb0>;
+			data-position = <0x3000>;
+			description = "U-Boot (64-bit)";
+			type = "standalone";
+			arch = "arm64";
+			compression = "none";
+			load = "@ \0";
+		};
+
+		fdt@1 {
+			data-size = <0x70c0>;
+			data-position = <0xc0bb0>;
+			description = "valddr4";
+			type = "flat_dt";
+			compression = "none";
+		};
+
+		atf@1 {
+			data-size = <0xb1b0>;
+			data-position = <0xc7c70>;
+			description = "ARM Trusted Firmware";
+			type = "firmware";
+			arch = "arm64";
+			compression = "none";
+			load = <0x960000>;
+			entry = <0x960000>;
+		};
+
+		tee@1 {
+			data-size = <0x203e70>;
+			data-position = <0xd2e20>;
+			description = "TEE firmware";
+			type = "firmware";
+			arch = "arm64";
+			compression = "none";
+			load = <0x5e000000>;
+			entry = <0x5e000000>;
+		};
+	};
+
+	configurations {
+		default = "config@1";
+
+		config@1 {
+			description = "valddr4";
+			firmware = "uboot@1";
+			loadables = "atf@1\0tee@1";
+			fdt = "fdt@1";
+		};
+	};
+};
