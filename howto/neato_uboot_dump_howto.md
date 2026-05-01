@@ -80,6 +80,7 @@ Currently this is the only way:
 # dumping emmc with bash script
  - needs on host pc:
    - `emmc-dump-all.sh` and `gen-bootcmd-flat.py`
+   - patience (dumps run with 500byts/sec. recommend to use `screen`  
  - Usage:
    - `Usage: ./emmc-dump-all.sh [start_block] [num_blocks] [baudrate]`
  - Example:
@@ -91,4 +92,5 @@ Currently this is the only way:
    - takes care of escaping $ and ; because of bash would interpret it
    - runs envvar via `uuu FB: ucmd run bootcmd`
    - calc current block, speed, etc (speed about 500 bytes per sec)
+   - fifo must be emptied, but as each time we need fresh usb connection, this ok (also usb connection is bottleneck, 115200 could do around 11kb/s)
 
