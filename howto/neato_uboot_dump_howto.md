@@ -1,5 +1,5 @@
 
-# Requirements duming EMMC neato gen4
+# Requirements dumping EMMC neato gen4
  - Neato gen4 D8/D9/D10 with RGB
  - USB C cable
  - UART 3.3V to USB adapter
@@ -10,7 +10,7 @@
  - Plug in USB-C to robot and host pc
  - check if uuu can see robot (run as root): 
 ```
-8# ./uuu -lsusb
+# ./uuu -lsusb
 uuu (Universal Update Utility) for nxp imx chips -- libuuu_1.5.243-0-g230f1b1
 
 Connected Known USB Devices
@@ -26,7 +26,7 @@ Connected Known USB Devices
  - robot uboot is running fastboot protocol
  - basic command like this:
 ```
-./uuu FB: ucmd echo blabla
+#./uuu FB: ucmd echo blabla
 uuu (Universal Update Utility) for nxp imx chips -- libuuu_1.5.243-0-g230f1b1
 
 Success 0    Failure 0
@@ -42,9 +42,13 @@ Okay
    - maybe this calls fastboot output function, not uboot?
 
 # connecting robot gen4 to UART-USB-Adapter
-  - remove bumper cover (just wiggle)
-  - connection see image. notice crossed RX and TX
-(gen4_bumper_uart.png)
+ - remove bumper cover (just wiggle) find uart connector with pinout (left to right looking at front)
+   - 1 GND
+   - 2 TX
+   - 3 VCC (not needed by most USB adapters)
+   - 4 RX
+ - connection see image. notice crossed RX and TX. (adapter was FTDI TTL-232R-3V3)
+![](gen4_bumper_uart_crossed.png)
 
 # testing UART to USB feedback :
  - now fire up a terminal on host pc pointing to the uart-usb-adapter with 115200
@@ -63,7 +67,7 @@ Okay
 
 # dumping emmc manunally
 Currently this is the only way:
- - enable UART2 tx
+ - enable UART2 tx (see above)
  - copy block from emmc to RAM: `uuu FB: ucmd mmc read <target> <blk#> <cnt>`
    - caution: use only 0x hex addresses
    - example: `uuu FB: ucmd mmc read 0x42000000 0x0 1` (copy 1 block (512 bytes) from 0x0 to hopefully unused RAM at 0x42000000)
@@ -73,8 +77,8 @@ Currently this is the only way:
    - also fifo is 32 bytes, but sometimes scrambles (prins first fifo-item at last wtf)
  - repeat TX liek 512 times the copy next block from emmc to RAM and repeat
 
-# dumping emmc with base script
- - needs:
+# dumping emmc with bash script
+ - needs on host pc:
    - `emmc-dump-all.sh` and `gen-bootcmd-flat.py`
  - Usage:
    - `Usage: ./emmc-dump-all.sh [start_block] [num_blocks] [baudrate]`
@@ -82,4 +86,9 @@ Currently this is the only way:
    - `./emmc-dump-all.sh 0x0 2048 115200`
      - Dumps emmc from 0x with length 2048 blocks so 1mb 
      - should be something like `2026-04-30_emmc_lba_0_2200_try1.dd`
+ - script is quite optimized:
+   - `gen-bootcmd-flat.py` generates 32 byte copy instructions at once for maximum use of TX FIFO and sets this as `bootcmd` envvar (also does anti-scramble-stuff for dumb fifo)
+   - takes care of escaping $ and ; because of bash would interpret it
+   - runs envvar via `uuu FB: ucmd run bootcmd`
+   - calc current block, speed, etc (speed about 500 bytes per sec)
 
