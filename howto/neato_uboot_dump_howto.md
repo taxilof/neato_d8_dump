@@ -1,6 +1,8 @@
 
 # Requirements dumping EMMC neato gen4
- - Neato gen4 D8/D9/D10 with RGB
+ - Neato gen4 D8/D9/D10 with RGB !!!
+   - this is essential: robot must be stuck in LED RGB/rainbow mode
+   - if no rainbow mode: you can watch kernel boot log on bumper UART only
  - USB C cable
  - UART 3.3V to USB adapter
  - host pc with linux and 2x usb
